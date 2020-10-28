@@ -5,7 +5,6 @@ pipeline {
     }
     agent {
       node {
-        //TODO: Add label for Node.js jenkins 
         label 'nodejs'
       }
     }
@@ -54,16 +53,18 @@ pipeline {
                 echo '### Cleaning existing resources in DEV env ###'
                 sh '''
                         oc project ${DEV_PROJECT}
-                        oc new-app --as-deployment-config --name books nodejs:12~${APP_GIT_URL} \
-                        --build-env npm_config_registry=${NEXUS_SERVER} \
-                        --context-dir ${APP_NAME}
-                        
-                        oc expose svc/${APP_NAME}
+                        oc delete all -l app=${APP_NAME}
+                        sleep 5
                    '''
 
                 echo '### Creating a new app in DEV env ###'
-                //TODO: Create a new app and expose the service
-                
+                sh '''
+oc project ${DEV_PROJECT}
+oc new-app --as-deployment-config --name books nodejs:12~${APP_GIT_URL} \
+--build-env npm_config_registry=${NEXUS_SERVER} \
+--context-dir ${APP_NAME}
+oc expose svc/${APP_NAME}
+'''
             }
         }
 
@@ -101,10 +102,14 @@ pipeline {
 
         stage('Promote to Staging Env') {
             steps {
-                openshift.withCluster() {
-                openshift.tag("${DEV_PROJECT}/books:latest", "${STAGE_PROJECT}/books:stage")
+                timeout(time: 60, unit: 'MINUTES') {
+                    input message: "Promote to Staging?"
                 }
-                //TODO: Tag the books:latest image stream as books:stage
+                script {
+openshift.withCluster() {
+openshift.tag("${DEV_PROJECT}/books:latest", "${STAGE_PROJECT}/books:stage")
+}
+}
             }
         }
 
@@ -112,13 +117,17 @@ pipeline {
             steps {
                 echo '### Cleaning existing resources in Staging ###'
                 sh '''
-                       oc project ${STAGE_PROJECT}
-                       oc new-app --as-deployment-config --name books -i books:stage
-                       oc expose svc/${APP_NAME}
+                        oc project ${STAGE_PROJECT}
+                        oc delete all -l app=${APP_NAME}
+                        sleep 5
                    '''
 
                 echo '### Creating a new app in Staging ###'
-                //TODO: Create a new app in stage using the books:stage image stream and expose the service
+                sh '''
+oc project ${STAGE_PROJECT}
+oc new-app --as-deployment-config --name books -i books:stage
+oc expose svc/${APP_NAME}
+'''
             }
         }
 
@@ -130,13 +139,12 @@ pipeline {
                     routeHost = readFile('routehost').trim()
 
                     openshift.withCluster() {
-                        //TODO: Watch deployment until pod is in 'Running' state
                         openshift.withProject( "${STAGE_PROJECT}" ) {
-                            def deployment = openshift.selector("dc", "${APP_NAME}").rollout()
-                            openshift.selector("dc", "${APP_NAME}").related('pods').untilEach(1) {
-                                return (it.object().status.phase == "Running")
-                            }
-                        }
+def deployment = openshift.selector("dc", "${APP_NAME}").rollout()
+openshift.selector("dc", "${APP_NAME}").related('pods').untilEach(1) {
+return (it.object().status.phase == "Running")
+}
+}
 
                         echo "Deployment to Staging env is complete. Access the app at the URL http://${routeHost}."
                     }
